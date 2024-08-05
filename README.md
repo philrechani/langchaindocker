@@ -28,7 +28,7 @@ ollama run mistral
 ```
 (if the NAME is different, use that NAME instead. You can also use another model besides mistral)
 
-When you're done, simply run:
+When you're done, ctrl-C the server (if it is open) and /bye -> exit the app terminal to leave. The run:
 ```
 docker compose down
 ```
