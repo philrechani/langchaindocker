@@ -34,6 +34,6 @@ docker compose down
 ```
 
 # Issues/todo
-1: It has to install mistral every time. It shouldn't have to do this.
-2: Doesn't recognize GPU yet, I'll need to consult here: https://hub.docker.com/r/ollama/ollama to figure out how to do that with multiple GPU types (automatically recognize)
-3: Add the scripts to use langchain
+1. It has to install mistral every time. It shouldn't have to do this.
+2. Doesn't recognize GPU yet, I'll need to consult here: https://hub.docker.com/r/ollama/ollama to figure out how to do that with multiple GPU types (automatically recognize)
+3. Add the scripts to use langchain
