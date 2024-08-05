@@ -1,0 +1,26 @@
+version: '3'
+services:
+  llm-server:
+    build:
+      context: ./llm-server
+      dockerfile: Dockerfile
+    tty: true #idk but it keeps it running without hanging
+    stdin_open: true #allows you to type when attaching to the container
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434 #ensure it listens on all interfaces
+    command: ollama serve
+    expose:
+      - "11434"
+
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    tty: true
+    stdin_open: true
+    environment:
+      - OLLAMA_HOST=llm-server:11434
+    
+networks:
+  llm-connection:
+    driver: bridge
