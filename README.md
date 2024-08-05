@@ -10,11 +10,11 @@ then run:
 docker compose build
 docker compose up --detach
 ````
-(I believe docker compose up will build it if it isn't already, so docker compose  build might not be necessary)
+(I believe docker compose up will build it if it isn't already, so ```docker compose build``` might not be necessary)
 
 The llm-server container should automatically serve ollama
 
-Then you need to find the NAME of the app container. It should be langchaindocker-app-1. Run the following command and the name should be under NAMES
+Then you need to find the NAME of the app container. It should be ```langchaindocker-app-1```. Run the following command and the name should be under NAMES
 
 ```
 docker container ls
@@ -28,7 +28,7 @@ ollama run mistral
 ```
 (if the NAME is different, use that NAME instead. You can also use another model besides mistral)
 
-When you're done, ctrl-C the server (if it is open) and /bye -> exit the app terminal to leave. The run:
+When you're done, ```ctrl-C``` the server (if it is open) and ```/bye``` -> ```exit``` the app terminal to leave. The run:
 ```
 docker compose down
 ```
