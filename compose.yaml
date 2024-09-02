@@ -11,6 +11,8 @@ services:
     command: ollama serve
     expose:
       - "11434"
+    networks:
+      - llm-connection
 
   app:
     build:
@@ -20,7 +22,24 @@ services:
     stdin_open: true
     environment:
       - OLLAMA_HOST=llm-server:11434
-    
+    networks:
+      - llm-connection
+    volumes:
+      - ./app:/usr/src/app
+    working_dir: /usr/src/app
+
+  chroma-db:
+    image: chromadb/chroma:latest
+    volumes:
+      - ./chroma_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=False
+      - CHROMA_ENDPOINT='http://host.docker.internal:8000'
+    ports:
+      - "49151:8000"
+    networks:
+      - llm-connection
+
 networks:
   llm-connection:
     driver: bridge

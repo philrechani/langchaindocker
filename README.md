@@ -21,12 +21,16 @@ docker container ls
 ```
 This will show all running containers
 
-Finally, open a separate terminal and run
+You can then open a separate terminal and run
 ```
 docker attach langchaindocker-app-1
-ollama run mistral
+ollama pull nomic-embed-text
 ```
 (if the NAME is different, use that NAME instead. You can also use another model besides mistral)
+
+Now to run a test. try ```node test-chromadb.js```. If this doesn't work, type ```npm install``` then attempt to run the test script again.
+
+If you wish to use the LLM, pull a model: ```ollama pull mistral``` for example.
 
 When you're done, ```ctrl-C``` the server (if it is open) and ```/bye``` -> ```exit``` the app terminal to leave. The run:
 ```
@@ -36,4 +40,4 @@ docker compose down
 # Issues/todo
 1. It has to install mistral every time. It shouldn't have to do this.
 2. Doesn't recognize GPU yet, I'll need to consult here: https://hub.docker.com/r/ollama/ollama to figure out how to do that with multiple GPU types (automatically recognize)
-3. Add the scripts to use langchain
+3. Currently it runs with chromadb. Queries are successful, but now I'll need a better interface for uploading documents. It also needs to be integrated with langchain.
