@@ -25,12 +25,13 @@ You can then open a separate terminal and run
 ```
 docker attach langchaindocker-app-1
 ollama pull nomic-embed-text
+ollama pull mistral
 ```
 (if the NAME is different, use that NAME instead. You can also use another model besides mistral)
 
 Now to run a test. try ```node test-chromadb.js```. If this doesn't work, type ```npm install``` then attempt to run the test script again.
 
-If you wish to use the LLM, pull a model: ```ollama pull mistral``` for example.
+
 
 When you're done, ```ctrl-C``` the server (if it is open) and ```/bye``` -> ```exit``` the app terminal to leave. The run:
 ```

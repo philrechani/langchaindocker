@@ -6,7 +6,7 @@ import {LocalIndex} from 'vectra'
 
 process.stdin.setEncoding('utf8');
 
-async function initializeVectra() {
+async function initializeChromaDB() {
     const index = new LocalIndex(path.join(__dirname, '..', 'index'))
     const chromaClient = new Vectra();
 

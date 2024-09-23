@@ -20,6 +20,7 @@
     "cheerio": "^1.0.0-rc.12",
     "chromadb": "^1.8.1",
     "commander": "^11.0.0",
-    "langchain": "^0.1.0"
+    "langchain": "^0.1.0",
+    "@langchain/ollama": "^0.1.0"
   }
 }
