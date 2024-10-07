@@ -25,8 +25,12 @@ RUN bash -c "source $NVM_DIR/nvm.sh && npm install"
 COPY . .
 
 # Set up Python virtual environment and install dependencies
-RUN python3 -m venv venv
-RUN bash -c ". venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt"
+RUN python3 --version
+RUN which python3
+RUN python3 -m venv --help
+RUN python3 -m venv venv || echo "Failed to create venv"
+RUN ls -la
+RUN bash -c ". venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt" || echo "Failed to activate venv or install packages"
 
 # Install additional software
 RUN curl -fsSL https://ollama.ai/install.sh | sh

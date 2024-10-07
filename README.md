@@ -31,7 +31,7 @@ ollama pull mistral
 
 Now to run a test. try ```node test-chromadb.js```. If this doesn't work, type ```npm install``` then attempt to run the test script again.
 
-
+You can also test a query which will embed a link and query the LLM. Do ```node test-cli.js```
 
 When you're done, ```ctrl-C``` the server (if it is open) and ```/bye``` -> ```exit``` the app terminal to leave. The run:
 ```

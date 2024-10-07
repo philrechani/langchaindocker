@@ -9,8 +9,8 @@ services:
     environment:
       - OLLAMA_HOST=0.0.0.0:11434 #ensure it listens on all interfaces
     command: ollama serve
-    expose:
-      - "11434"
+    ports:
+      - "49152:11434"
     networks:
       - llm-connection
 

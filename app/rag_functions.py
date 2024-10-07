@@ -1,0 +1,414 @@
+# Requires !pip install PyMuPDF, see: https://github.com/pymupdf/pymupdf
+import fitz # (pymupdf, found this is better than pypdf for our use case, note: licence is AGPL-3.0, keep that in mind if you want to use any code commercially)
+from spacy.lang.en import English # see https://spacy.io/usage for install instructions
+# Download PDF file
+import os
+import requests
+from tqdm.auto import tqdm # for progress bars, requires !pip install tqdm 
+import re
+import pandas as pd
+from sentence_transformers import SentenceTransformer
+import chromadb
+from bs4 import BeautifulSoup
+
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers.utils import is_flash_attn_2_available 
+
+# 1. Create quantization config for smaller model loading (optional)
+# Requires !pip install bitsandbytes accelerate, see: https://github.com/TimDettmers/bitsandbytes, https://huggingface.co/docs/accelerate/
+# For models that require 4-bit quantization (use this if you have low GPU memory available)
+
+
+from huggingface_hub import login
+
+nlp = English()
+
+# Add a sentencizer pipeline, see https://spacy.io/api/sentencizer/ 
+nlp.add_pipe("sentencizer")
+
+def iterator(obj, istqdm = False):
+    if istqdm:
+        return tqdm(obj)
+    else:
+        return obj
+    
+def load_embedding():
+    embedding_model_name = "all-mpnet-base-v2"
+    embedding_model = SentenceTransformer(model_name_or_path=embedding_model_name, 
+                                        device="cuda")
+    return embedding_model 
+
+def text_formatter(text: str) -> str:
+    """Performs minor formatting on text."""
+    cleaned_text = text.replace("\n", " ").strip() # note: this might be different for each doc (best to experiment)
+
+    # Other potential text formatting functions can go here
+    return cleaned_text
+
+# Open PDF and get lines/pages
+# Note: this only focuses on text, rather than images/figures etc
+def open_and_read_pdf(pdf_path: str, istqdm = False) -> list[dict]:
+    """
+    Opens a PDF file, reads its text content page by page, and collects statistics.
+
+    Parameters:
+        pdf_path (str): The file path to the PDF document to be opened and read.
+
+    Returns:
+        list[dict]: A list of dictionaries, each containing the page number
+        (adjusted), character count, word count, sentence count, token count, and the extracted text
+        for each page.
+    """
+    doc = fitz.open(pdf_path)  # open a document
+    pages_and_texts = []
+    for page_number, page in iterator(enumerate(doc), istqdm):  # iterate the document pages
+        text = page.get_text()  # get plain text encoded as UTF-8
+        text = text_formatter(text)
+        pages_and_texts.append({"page_number": page_number,  # adjust page numbers since our PDF starts on page 42
+                                "page_char_count": len(text),
+                                "page_word_count": len(text.split(" ")),
+                                "page_sentence_count_raw": len(text.split(". ")),
+                                "page_token_count": len(text) / 4,  # 1 token = ~4 chars, see: https://help.openai.com/en/articles/4936856-what-are-tokens-and-how-to-count-them
+                                "text": text})
+    return pages_and_texts
+
+def load_webpage_requests(url: str) -> str:
+    """
+    Loads a webpage using the requests library.
+
+    Parameters:
+        url (str): The URL of the webpage to be loaded.
+
+    Returns:
+        str: The text content of the webpage.
+    """
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'html.parser')
+    return soup.get_text()
+
+def process_webpage_content(text: str) -> list[dict]:
+    """
+    Processes the webpage content and collects statistics.
+
+    Parameters:
+        text (str): The text content of the webpage.
+
+    Returns:
+        List[Dict]: A list containing a dictionary with character count, word count,
+        sentence count, token count, and the extracted text.
+    """
+
+    return [{
+        "page_number": 1,
+        "char_count": len(text),
+        "word_count": len(text.split()),
+        "sentence_count_raw": len(text.split('. ')),
+        "token_count": len(text) / 4,  # 1 token = ~4 chars approximation
+        "text": text
+    }]
+
+def apply_spacy_nlp(pages_and_texts: dict, istqdm = False) -> dict:
+    for item in iterator(pages_and_texts, istqdm):
+        item["sentences"] = list(nlp(item["text"]).sents)
+        
+        # Make sure all sentences are strings
+        item["sentences"] = [str(sentence) for sentence in item["sentences"]]
+        
+        # Count the sentences 
+        item["page_sentence_count_spacy"] = len(item["sentences"])
+    return pages_and_texts
+
+
+# Define split size to turn groups of sentences into chunks
+# Create a function that recursively splits a list into desired sizes
+def split_list(input_list: list, 
+               slice_size: int) -> list[list[str]]:
+    """
+    Splits the input_list into sublists of size slice_size (or as close as possible).
+
+    For example, a list of 17 sentences would be split into two lists of [[10], [7]]
+    """
+    return [input_list[i:i + slice_size] for i in range(0, len(input_list), slice_size)]
+
+def chunk_sentences(pages_and_texts: dict, num_sentence_chunk_size: int, istqdm = False) -> dict:
+    # Loop through pages and texts and split sentences into chunks+
+    for item in iterator(pages_and_texts, istqdm):
+        item["sentence_chunks"] = split_list(input_list=item["sentences"],
+                                            slice_size=num_sentence_chunk_size)
+        item["num_chunks"] = len(item["sentence_chunks"])
+    return pages_and_texts
+
+
+# Split each chunk into its own item
+# This is used at the very end to use the indicies to reference the pages
+
+def restructure_chunks(pages_and_texts: dict, istqdm = False) -> dict:
+    pages_and_chunks = []
+    
+    for item in iterator(pages_and_texts, istqdm):
+        for sentence_chunk in item["sentence_chunks"]:
+            chunk_dict = {}
+            chunk_dict["page_number"] = item["page_number"]
+            
+            # Join the sentences together into a paragraph-like structure, aka a chunk (so they are a single string)
+            joined_sentence_chunk = "".join(sentence_chunk).replace("  ", " ").strip()
+            joined_sentence_chunk = re.sub(r'\.([A-Z])', r'. \1', joined_sentence_chunk) # ".A" -> ". A" for any full-stop/capital letter combo 
+            chunk_dict["sentence_chunk"] = joined_sentence_chunk
+
+            # Get stats about the chunk
+            chunk_dict["chunk_char_count"] = len(joined_sentence_chunk)
+            chunk_dict["chunk_word_count"] = len([word for word in joined_sentence_chunk.split(" ")])
+            chunk_dict["chunk_token_count"] = len(joined_sentence_chunk) / 4 # 1 token = ~4 characters
+            
+            pages_and_chunks.append(chunk_dict)
+    return pages_and_chunks
+
+# it feels like this could be done more intelligently, but it's a good starting point
+
+
+def filter_pages_and_texts(pages_and_chunks: dict, 
+                           min_token_length: int) -> dict:
+    df = pd.DataFrame(pages_and_chunks)
+    pages_and_chunks_over_min_token_len = df[df["chunk_token_count"] > min_token_length].to_dict(orient="records")
+    return pages_and_chunks_over_min_token_len
+
+# Requires !pip install sentence-transformers
+
+embedding_model_name = "all-mpnet-base-v2"
+embedding_model = SentenceTransformer(model_name_or_path=embedding_model_name, 
+                                      device="cuda") # choose the device to load the model to (note: GPU will often be *much* faster than CPU)
+#embedding_model.to("cuda")
+def get_embedding(text):
+    url = "http://localhost:49152/api/embeddings"
+    payload = {
+        "model": "nomic-embed-text",
+        "prompt": text
+    }
+    response = requests.post(url, json=payload)
+    return response.json()['embedding']
+
+def apply_ollama_embeddings(pages_and_chunks_over_min_token_len: dict, 
+                     istqdm = False) -> dict:
+    
+    for item in iterator(pages_and_chunks_over_min_token_len, istqdm):
+        item["embedding"] = get_embedding(item['sentence_chunk'])
+    
+    return pages_and_chunks_over_min_token_len
+
+def apply_embeddings(pages_and_chunks_over_min_token_len: dict, 
+                     embedding_model: SentenceTransformer,
+                     istqdm = False,
+                     flatten = False) -> dict:
+    if not flatten:
+        for item in iterator(pages_and_chunks_over_min_token_len, istqdm):
+            item["embedding"] = embedding_model.encode(item["sentence_chunk"],
+                                                batch_size=32,
+                                                convert_to_tensor=True)
+    else:
+        text_chunks = [item["sentence_chunk"] for item in pages_and_chunks_over_min_token_len]
+        embeddings = embedding_model.encode(text_chunks)
+        print(embeddings)
+        for embedding, item in iterator(zip(embeddings, pages_and_chunks_over_min_token_len), istqdm):
+            item["embedding"] = embedding
+    
+    return pages_and_chunks_over_min_token_len
+
+
+def connect_to_collection(host='localhost', port=49151):
+    chroma_client = chromadb.HttpClient(host=host, port=port)
+    collection = chroma_client.get_or_create_collection(name='testing_python_creation')
+    return chroma_client, collection
+
+def add_to_collection(embedded_pages_and_chunks,collection,path =None, url =None):
+    embedding_model_name = "all-mpnet-base-v2"
+    link = ''
+    if path:
+        file_name = os.path.basename(path)
+        link = path
+    if url:
+        file_name = url
+        link = url
+        
+        
+    collection.add(
+        documents=[item['sentence_chunk'] for item in embedded_pages_and_chunks],
+        metadatas=[{
+            'page_number': item['page_number'],
+            'char_count': item['chunk_char_count'],
+            'word_count': item['chunk_word_count'],
+            'token_count': item['chunk_token_count'],
+            'embedding_model': embedding_model_name,
+            'link': link
+        } for item in embedded_pages_and_chunks],
+        ids=[f"{file_name}_chunk_{i}" for i in range(len(embedded_pages_and_chunks))],
+        embeddings=[item['embedding'].tolist() for item in embedded_pages_and_chunks]
+    )
+
+def apply_pipeline(pages_and_texts):
+    pages_and_texts = apply_spacy_nlp(pages_and_texts)
+    pages_and_texts = chunk_sentences(pages_and_texts,num_sentence_chunk_size = 10 )
+    pages_and_chunks = restructure_chunks(pages_and_texts)
+    pages_and_chunks = filter_pages_and_texts(pages_and_chunks,30)
+    embedded_pages_and_chunks = apply_embeddings(pages_and_chunks,embedding_model,flatten=True)
+    return embedded_pages_and_chunks
+
+def load_llm():
+    # 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
+    token = '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'
+    login(token)
+    
+    gpu_memory_bytes = torch.cuda.get_device_properties(0).total_memory
+    gpu_memory_gb = round(gpu_memory_bytes / (2**30))
+    print(f"Available GPU memory: {gpu_memory_gb} GB")
+    # Note: the following is Gemma focused, however, there are more and more LLMs of the 2B and 7B size appearing for local use.
+    if gpu_memory_gb < 5.1:
+        print(f"Your available GPU memory is {gpu_memory_gb}GB, you may not have enough memory to run a Gemma LLM locally without quantization.")
+    elif gpu_memory_gb < 8.1:
+        print(f"GPU memory: {gpu_memory_gb} | Recommended model: Gemma 2B in 4-bit precision.")
+        use_quantization_config = True 
+        model_id = "google/gemma-2b-it"
+    elif gpu_memory_gb < 19.0:
+        print(f"GPU memory: {gpu_memory_gb} | Recommended model: Gemma 2B in float16 or Gemma 7B in 4-bit precision.")
+        use_quantization_config = False 
+        model_id = "google/gemma-2b-it"
+    elif gpu_memory_gb > 19.0:
+        print(f"GPU memory: {gpu_memory_gb} | Recommend model: Gemma 7B in 4-bit or float16 precision.")
+        use_quantization_config = False 
+        model_id = "google/gemma-7b-it"
+
+    print(f"use_quantization_config set to: {use_quantization_config}")
+    print(f"model_id set to: {model_id}")
+
+
+    quantization_config = BitsAndBytesConfig(load_in_4bit=True,
+                                            bnb_4bit_compute_dtype=torch.float16)
+
+    # Bonus: Setup Flash Attention 2 for faster inference, default to "sdpa" or "scaled dot product attention" if it's not available
+    # Flash Attention 2 requires NVIDIA GPU compute capability of 8.0 or above, see: https://developer.nvidia.com/cuda-gpus
+    # Requires !pip install flash-attn, see: https://github.com/Dao-AILab/flash-attention 
+    if (is_flash_attn_2_available()) and (torch.cuda.get_device_capability(0)[0] >= 8):
+        attn_implementation = "flash_attention_2"
+    else:
+        attn_implementation = "sdpa"
+    print(f"[INFO] Using attention implementation: {attn_implementation}")
+
+    # 2. Pick a model we'd like to use (this will depend on how much GPU memory you have available)
+    #model_id = "google/gemma-7b-it"
+    model_id = model_id # (we already set this above)
+    print(f"[INFO] Using model_id: {model_id}")
+
+    # 3. Instantiate tokenizer (tokenizer turns text into numbers ready for the model) 
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=model_id)
+
+    # 4. Instantiate the model
+    llm_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=model_id, 
+                                                    torch_dtype=torch.float16, # datatype to use, we want float16
+                                                    quantization_config=quantization_config if use_quantization_config else None,
+                                                    low_cpu_mem_usage=False, # use full memory 
+                                                    attn_implementation=attn_implementation) # which attention version to use
+
+    if not use_quantization_config: # quantization takes care of device setting automatically, so if it's not used, send model to GPU 
+        llm_model.to("cuda")
+        
+    return llm_model, tokenizer
+
+def prompt_formatter(query: str, 
+                     context_items: list[dict],
+                     tokenizer) -> str:
+    """
+    Augments query with text-based context from context_items.
+    """
+    # Join context items into one dotted paragraph
+    context = "- " + "\n- ".join(context_items)
+
+    # Create a base prompt with examples to help the model
+    # Note: this is very customizable, I've chosen to use 3 examples of the answer style we'd like.
+    # We could also write this in a txt file and import it in if we wanted.
+    base_prompt = """Based on the following context items, please answer the query.
+Give yourself room to think by extracting relevant passages from the context before answering the query.
+Don't return the thinking, only return the answer.
+Make sure your answers are as explanatory as possible.
+Use the following examples as reference for the ideal answer style.
+\nExample 1:
+Query: What are the fat-soluble vitamins?
+Answer: The fat-soluble vitamins include Vitamin A, Vitamin D, Vitamin E, and Vitamin K. These vitamins are absorbed along with fats in the diet and can be stored in the body's fatty tissue and liver for later use. Vitamin A is important for vision, immune function, and skin health. Vitamin D plays a critical role in calcium absorption and bone health. Vitamin E acts as an antioxidant, protecting cells from damage. Vitamin K is essential for blood clotting and bone metabolism.
+\nExample 2:
+Query: What are the causes of type 2 diabetes?
+Answer: Type 2 diabetes is often associated with overnutrition, particularly the overconsumption of calories leading to obesity. Factors include a diet high in refined sugars and saturated fats, which can lead to insulin resistance, a condition where the body's cells do not respond effectively to insulin. Over time, the pancreas cannot produce enough insulin to manage blood sugar levels, resulting in type 2 diabetes. Additionally, excessive caloric intake without sufficient physical activity exacerbates the risk by promoting weight gain and fat accumulation, particularly around the abdomen, further contributing to insulin resistance.
+\nExample 3:
+Query: What is the importance of hydration for physical performance?
+Answer: Hydration is crucial for physical performance because water plays key roles in maintaining blood volume, regulating body temperature, and ensuring the transport of nutrients and oxygen to cells. Adequate hydration is essential for optimal muscle function, endurance, and recovery. Dehydration can lead to decreased performance, fatigue, and increased risk of heat-related illnesses, such as heat stroke. Drinking sufficient water before, during, and after exercise helps ensure peak physical performance and recovery.
+\nNow use the following context items to answer the user query:
+{context}
+\nRelevant passages: <extract relevant passages from the context here>
+User query: {query}
+Answer:"""
+
+    # Update base prompt with context items and query   
+    base_prompt = base_prompt.format(context=context, query=query)
+
+    # Create prompt template for instruction-tuned model
+    dialogue_template = [
+        {"role": "user",
+        "content": base_prompt}
+    ]
+
+    # Apply the chat template
+    prompt = tokenizer.apply_chat_template(conversation=dialogue_template,
+                                          tokenize=False,
+                                          add_generation_prompt=True)
+    return prompt
+
+def ask(query,
+        embedding_model,
+        collection,
+        tokenizer,
+        llm_model,
+        temperature=0.7,
+        max_new_tokens=512,
+        format_answer_text=True, 
+        return_answer_only=True):
+    """
+    Takes a query, finds relevant resources/context and generates an answer to the query based on the relevant resources.
+    """
+    
+    # Get just the scores and indices of top related results
+    query_embedding = embedding_model.encode(query)
+    
+    # Create a list of context items
+    results = collection.query(
+    query_embeddings=[query_embedding.tolist()],
+    n_results=5
+)
+    context_items = [result for result in results['documents'][0]]
+
+    # Add score to context item
+    """ for i, item in enumerate(context_items):
+        item["score"] = scores[i].cpu() # return score back to CPU  """
+        
+    # Format the prompt with context items
+    prompt = prompt_formatter(query=query,
+                              context_items=context_items,tokenizer=tokenizer)
+    
+    # Tokenize the prompt
+    input_ids = tokenizer(prompt, return_tensors="pt").to("cuda")
+
+    # Generate an output of tokens
+    outputs = llm_model.generate(**input_ids,
+                                 temperature=temperature,
+                                 do_sample=True,
+                                 max_new_tokens=max_new_tokens)
+    
+    # Turn the output tokens into text
+    output_text = tokenizer.decode(outputs[0])
+
+    if format_answer_text:
+        # Replace special tokens and unnecessary help message
+        output_text = output_text.replace(prompt, "").replace("<bos>", "").replace("<eos>", "").replace("Sure, here is the answer to the user query:\n\n", "")
+
+    # Only return the answer without the context items
+    if return_answer_only:
+        return output_text
+    
+    return output_text, context_items
