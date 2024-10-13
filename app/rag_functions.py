@@ -12,6 +12,7 @@ import chromadb
 from bs4 import BeautifulSoup
 
 import torch
+import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from transformers.utils import is_flash_attn_2_available 
 
@@ -21,6 +22,9 @@ from transformers.utils import is_flash_attn_2_available
 
 
 from huggingface_hub import login
+from rank_bm25_local.rank_bm25 import BM25Okapi
+
+from prompts.prompts import BASE_PROMPT, MIN_PROMPT
 
 nlp = English()
 
@@ -214,22 +218,27 @@ def apply_embeddings(pages_and_chunks_over_min_token_len: dict,
     
     return pages_and_chunks_over_min_token_len
 
-
-def connect_to_collection(host='localhost', port=49151):
+def connect_to_collection(host='localhost', port=49151, name='testing_python_creation'):
     chroma_client = chromadb.HttpClient(host=host, port=port)
-    collection = chroma_client.get_or_create_collection(name='testing_python_creation')
+    collection = chroma_client.get_or_create_collection(name=name)
     return chroma_client, collection
 
-def add_to_collection(embedded_pages_and_chunks,collection,path =None, url =None):
+def add_to_collection(embedded_pages_and_chunks,
+                      collection,
+                      path =None, 
+                      url =None,
+                      text = None):
     embedding_model_name = "all-mpnet-base-v2"
     link = ''
     if path:
+        # this is where plain text and pdf should be distinguished
         file_name = os.path.basename(path)
         link = path
     if url:
         file_name = url
         link = url
-        
+    if text:
+        link = 'plain text'
         
     collection.add(
         documents=[item['sentence_chunk'] for item in embedded_pages_and_chunks],
@@ -244,6 +253,28 @@ def add_to_collection(embedded_pages_and_chunks,collection,path =None, url =None
         ids=[f"{file_name}_chunk_{i}" for i in range(len(embedded_pages_and_chunks))],
         embeddings=[item['embedding'].tolist() for item in embedded_pages_and_chunks]
     )
+    
+def query_collection(query, 
+                     collection, 
+                     embedding_model,
+                     NLP = False):
+    query_embedding = embedding_model.encode(query)
+    
+    # Create a list of context items
+    results = collection.query(
+        query_embeddings=[query_embedding.tolist()],
+        n_results=30
+    )
+    # get the score?
+    context_items = [result for result in results['documents'][0]]
+    if NLP:
+        
+        tokenized_context_items = [doc.split(" ") for doc in context_items ]
+        bm25 = BM25Okapi(tokenized_context_items)
+        tokenized_query = query.split(" ")
+        context_items = bm25.get_top_n(tokenized_query,context_items)
+        
+    return context_items, results
 
 def apply_pipeline(pages_and_texts):
     pages_and_texts = apply_spacy_nlp(pages_and_texts)
@@ -315,7 +346,8 @@ def load_llm():
 
 def prompt_formatter(query: str, 
                      context_items: list[dict],
-                     tokenizer) -> str:
+                     tokenizer,
+                     prompt: str) -> str:
     """
     Augments query with text-based context from context_items.
     """
@@ -325,28 +357,10 @@ def prompt_formatter(query: str,
     # Create a base prompt with examples to help the model
     # Note: this is very customizable, I've chosen to use 3 examples of the answer style we'd like.
     # We could also write this in a txt file and import it in if we wanted.
-    base_prompt = """Based on the following context items, please answer the query.
-Give yourself room to think by extracting relevant passages from the context before answering the query.
-Don't return the thinking, only return the answer.
-Make sure your answers are as explanatory as possible.
-Use the following examples as reference for the ideal answer style.
-\nExample 1:
-Query: What are the fat-soluble vitamins?
-Answer: The fat-soluble vitamins include Vitamin A, Vitamin D, Vitamin E, and Vitamin K. These vitamins are absorbed along with fats in the diet and can be stored in the body's fatty tissue and liver for later use. Vitamin A is important for vision, immune function, and skin health. Vitamin D plays a critical role in calcium absorption and bone health. Vitamin E acts as an antioxidant, protecting cells from damage. Vitamin K is essential for blood clotting and bone metabolism.
-\nExample 2:
-Query: What are the causes of type 2 diabetes?
-Answer: Type 2 diabetes is often associated with overnutrition, particularly the overconsumption of calories leading to obesity. Factors include a diet high in refined sugars and saturated fats, which can lead to insulin resistance, a condition where the body's cells do not respond effectively to insulin. Over time, the pancreas cannot produce enough insulin to manage blood sugar levels, resulting in type 2 diabetes. Additionally, excessive caloric intake without sufficient physical activity exacerbates the risk by promoting weight gain and fat accumulation, particularly around the abdomen, further contributing to insulin resistance.
-\nExample 3:
-Query: What is the importance of hydration for physical performance?
-Answer: Hydration is crucial for physical performance because water plays key roles in maintaining blood volume, regulating body temperature, and ensuring the transport of nutrients and oxygen to cells. Adequate hydration is essential for optimal muscle function, endurance, and recovery. Dehydration can lead to decreased performance, fatigue, and increased risk of heat-related illnesses, such as heat stroke. Drinking sufficient water before, during, and after exercise helps ensure peak physical performance and recovery.
-\nNow use the following context items to answer the user query:
-{context}
-\nRelevant passages: <extract relevant passages from the context here>
-User query: {query}
-Answer:"""
+    
 
     # Update base prompt with context items and query   
-    base_prompt = base_prompt.format(context=context, query=query)
+    base_prompt = prompt.format(context=context, query=query)
 
     # Create prompt template for instruction-tuned model
     dialogue_template = [
@@ -365,6 +379,7 @@ def ask(query,
         collection,
         tokenizer,
         llm_model,
+        prompt,
         temperature=0.7,
         max_new_tokens=512,
         format_answer_text=True, 
@@ -374,13 +389,14 @@ def ask(query,
     """
     
     # Get just the scores and indices of top related results
-    query_embedding = embedding_model.encode(query)
+    """ query_embedding = embedding_model.encode(query)
     
     # Create a list of context items
     results = collection.query(
     query_embeddings=[query_embedding.tolist()],
     n_results=5
-)
+) """
+    context_items, results = query_collection(query,collection, embedding_model)
     context_items = [result for result in results['documents'][0]]
 
     # Add score to context item
@@ -389,12 +405,15 @@ def ask(query,
         
     # Format the prompt with context items
     prompt = prompt_formatter(query=query,
-                              context_items=context_items,tokenizer=tokenizer)
+                              context_items=context_items,
+                              tokenizer=tokenizer,
+                              prompt=prompt)
     
     # Tokenize the prompt
     input_ids = tokenizer(prompt, return_tensors="pt").to("cuda")
 
     # Generate an output of tokens
+    # try Ollama:mistral
     outputs = llm_model.generate(**input_ids,
                                  temperature=temperature,
                                  do_sample=True,

@@ -9,6 +9,7 @@ from rag_functions import (
     add_to_collection,
     load_embedding
 )
+from prompts.prompts import MIN_PROMPT
 
 command = ''
 print('loading llm...')
@@ -55,6 +56,7 @@ while command != '/exit':
                                          collection,
                                          tokenizer,
                                          llm_model,
+                                         prompt=MIN_PROMPT,
                                          return_answer_only=False)
         print('---\n')
         print(output_text)

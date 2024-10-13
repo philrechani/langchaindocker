@@ -1,4 +1,4 @@
-PROMPT = """Based on the following context items, please answer the query.
+BASE_PROMPT = """Based on the following context items, please answer the query.
 Give yourself room to think by extracting relevant passages from the context before answering the query.
 Don't return the thinking, only return the answer.
 Make sure your answers are as explanatory as possible.
@@ -17,3 +17,10 @@ Answer: Hydration is crucial for physical performance because water plays key ro
 \nRelevant passages: <extract relevant passages from the context here>
 User query: {query}
 Answer:"""
+
+MIN_PROMPT = '''
+Here is some context:
+{context}
+For the following prompt:
+{query}
+'''
