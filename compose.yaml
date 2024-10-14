@@ -18,6 +18,13 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     tty: true
     stdin_open: true
     environment:
@@ -27,6 +34,7 @@ services:
     volumes:
       - ./app:/usr/src/app
     working_dir: /usr/src/app
+
 
   chroma-db:
     image: chromadb/chroma:latest

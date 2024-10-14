@@ -5,3 +5,4 @@ app/node_modules
 app/package-lock.json
 app/deprecated
 app/rank_bm25_local
+.deprecated

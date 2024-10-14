@@ -1,8 +1,7 @@
 # tensorflow>=2.9.1, <2.18.0
 chromadb>=0.5.5
-fitz
-spacy
 pymupdf
+spacy
 tqdm
 pandas
 sentence_transformers
@@ -11,3 +10,5 @@ torch
 transformers
 huggingface_hub
 rank-bm25
+frontend
+bitsandbytes

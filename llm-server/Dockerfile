@@ -1,5 +1,7 @@
 FROM ubuntu:latest
 
-RUN apt-get update && apt-get install -y curl iputils-ping 
+RUN set -e; \
+    apt-get update || (echo "apt-get update failed" && exit 1); \
+    apt-get install -y curl iputils-ping || (echo "apt-get install failed" && exit 1)
 
 RUN curl -fsSL https://ollama.ai/install.sh | sh

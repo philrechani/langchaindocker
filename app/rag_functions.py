@@ -1,5 +1,5 @@
 # Requires !pip install PyMuPDF, see: https://github.com/pymupdf/pymupdf
-import fitz # (pymupdf, found this is better than pypdf for our use case, note: licence is AGPL-3.0, keep that in mind if you want to use any code commercially)
+import pymupdf as fitz# (pymupdf, found this is better than pypdf for our use case, note: licence is AGPL-3.0, keep that in mind if you want to use any code commercially)
 from spacy.lang.en import English # see https://spacy.io/usage for install instructions
 # Download PDF file
 import os
@@ -19,7 +19,6 @@ from transformers.utils import is_flash_attn_2_available
 # 1. Create quantization config for smaller model loading (optional)
 # Requires !pip install bitsandbytes accelerate, see: https://github.com/TimDettmers/bitsandbytes, https://huggingface.co/docs/accelerate/
 # For models that require 4-bit quantization (use this if you have low GPU memory available)
-
 
 from huggingface_hub import login
 from rank_bm25_local.rank_bm25 import BM25Okapi

@@ -10,6 +10,7 @@ from rag_functions import (
     load_embedding
 )
 from prompts.prompts import MIN_PROMPT
+from config.CHROMA_CONFIG import HOST, PORT, NAME
 
 command = ''
 print('loading llm...')
@@ -17,7 +18,7 @@ llm_model, tokenizer = load_llm()
 print('loading the embedding model...')
 embedding_model = load_embedding()
 print('connecting to chromadb...')
-chroma_client, collection = connect_to_collection()
+chroma_client, collection = connect_to_collection(host=HOST,port=PORT,name=NAME)
 print('ready!\n')
 
 
