@@ -1,10 +1,8 @@
-# Requires !pip install PyMuPDF, see: https://github.com/pymupdf/pymupdf
-import pymupdf as fitz# (pymupdf, found this is better than pypdf for our use case, note: licence is AGPL-3.0, keep that in mind if you want to use any code commercially)
-from spacy.lang.en import English # see https://spacy.io/usage for install instructions
-# Download PDF file
+import pymupdf as fitz
+from spacy.lang.en import English 
 import os
 import requests
-from tqdm.auto import tqdm # for progress bars, requires !pip install tqdm 
+from tqdm.auto import tqdm 
 import re
 import pandas as pd
 from sentence_transformers import SentenceTransformer
@@ -16,19 +14,13 @@ import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from transformers.utils import is_flash_attn_2_available 
 
-# 1. Create quantization config for smaller model loading (optional)
-# Requires !pip install bitsandbytes accelerate, see: https://github.com/TimDettmers/bitsandbytes, https://huggingface.co/docs/accelerate/
-# For models that require 4-bit quantization (use this if you have low GPU memory available)
-
 from huggingface_hub import login
 from rank_bm25_local.rank_bm25 import BM25Okapi
 
 nlp = English()
 embedding_model_name = "all-mpnet-base-v2"
 embedding_model = SentenceTransformer(model_name_or_path=embedding_model_name, 
-                                      device="cuda") # choose the device to load the model to (note: GPU will often be *much* faster than CPU)
-
-# Add a sentencizer pipeline, see https://spacy.io/api/sentencizer/ 
+                                      device="cuda")
 nlp.add_pipe("sentencizer")
 
 def iterator(obj, istqdm = False):
@@ -49,12 +41,8 @@ def load_embedding(name = embedding_model_name,cuda_enabled = False):
 def text_formatter(text: str) -> str:
     """Performs minor formatting on text."""
     cleaned_text = text.replace("\n", " ").strip() # note: this might be different for each doc (best to experiment)
-
-    # Other potential text formatting functions can go here
     return cleaned_text
 
-# Open PDF and get lines/pages
-# Note: this only focuses on text, rather than images/figures etc
 def open_and_read_pdf(pdf_path: str, istqdm = False) -> list[dict]:
     """
     Opens a PDF file, reads its text content page by page, and collects statistics.
@@ -67,16 +55,16 @@ def open_and_read_pdf(pdf_path: str, istqdm = False) -> list[dict]:
         (adjusted), character count, word count, sentence count, token count, and the extracted text
         for each page.
     """
-    doc = fitz.open(pdf_path)  # open a document
+    doc = fitz.open(pdf_path)  
     pages_and_texts = []
-    for page_number, page in iterator(enumerate(doc), istqdm):  # iterate the document pages
-        text = page.get_text()  # get plain text encoded as UTF-8
+    for page_number, page in iterator(enumerate(doc), istqdm):  
+        text = page.get_text()  
         text = text_formatter(text)
-        pages_and_texts.append({"page_number": page_number,  # adjust page numbers since our PDF starts on page 42
+        pages_and_texts.append({"page_number": page_number,  
                                 "page_char_count": len(text),
                                 "page_word_count": len(text.split(" ")),
                                 "page_sentence_count_raw": len(text.split(". ")),
-                                "page_token_count": len(text) / 4,  # 1 token = ~4 chars, see: https://help.openai.com/en/articles/4936856-what-are-tokens-and-how-to-count-them
+                                "page_token_count": len(text) / 4,
                                 "text": text})
     return pages_and_texts
 
@@ -111,7 +99,7 @@ def process_webpage_content(text: str) -> list[dict]:
         "char_count": len(text),
         "word_count": len(text.split()),
         "sentence_count_raw": len(text.split('. ')),
-        "token_count": len(text) / 4,  # 1 token = ~4 chars approximation
+        "token_count": len(text) / 4,
         "text": text
     }]
 
@@ -126,9 +114,6 @@ def apply_spacy_nlp(pages_and_texts: dict, istqdm = False) -> dict:
         item["page_sentence_count_spacy"] = len(item["sentences"])
     return pages_and_texts
 
-
-# Define split size to turn groups of sentences into chunks
-# Create a function that recursively splits a list into desired sizes
 def split_list(input_list: list, 
                slice_size: int) -> list[list[str]]:
     """
@@ -145,10 +130,6 @@ def chunk_sentences(pages_and_texts: dict, num_sentence_chunk_size: int, istqdm 
                                             slice_size=num_sentence_chunk_size)
         item["num_chunks"] = len(item["sentence_chunks"])
     return pages_and_texts
-
-
-# Split each chunk into its own item
-# This is used at the very end to use the indicies to reference the pages
 
 def restructure_chunks(pages_and_texts: dict, istqdm = False) -> dict:
     pages_and_chunks = []
@@ -171,8 +152,6 @@ def restructure_chunks(pages_and_texts: dict, istqdm = False) -> dict:
             pages_and_chunks.append(chunk_dict)
     return pages_and_chunks
 
-# it feels like this could be done more intelligently, but it's a good starting point
-
 
 def filter_pages_and_texts(pages_and_chunks: dict, 
                            min_token_length: int) -> dict:
@@ -180,10 +159,6 @@ def filter_pages_and_texts(pages_and_chunks: dict,
     pages_and_chunks_over_min_token_len = df[df["chunk_token_count"] > min_token_length].to_dict(orient="records")
     return pages_and_chunks_over_min_token_len
 
-# Requires !pip install sentence-transformers
-
-
-#embedding_model.to("cuda")
 def get_embedding(text):
     url = "http://localhost:49152/api/embeddings"
     payload = {
@@ -315,31 +290,23 @@ def load_llm(token):
     quantization_config = BitsAndBytesConfig(load_in_4bit=True,
                                             bnb_4bit_compute_dtype=torch.float16)
 
-    # Bonus: Setup Flash Attention 2 for faster inference, default to "sdpa" or "scaled dot product attention" if it's not available
-    # Flash Attention 2 requires NVIDIA GPU compute capability of 8.0 or above, see: https://developer.nvidia.com/cuda-gpus
-    # Requires !pip install flash-attn, see: https://github.com/Dao-AILab/flash-attention 
     if (is_flash_attn_2_available()) and (torch.cuda.get_device_capability(0)[0] >= 8):
         attn_implementation = "flash_attention_2"
     else:
         attn_implementation = "sdpa"
     print(f"[INFO] Using attention implementation: {attn_implementation}")
 
-    # 2. Pick a model we'd like to use (this will depend on how much GPU memory you have available)
-    #model_id = "google/gemma-7b-it"
-    model_id = model_id # (we already set this above)
+    model_id = model_id 
     print(f"[INFO] Using model_id: {model_id}")
 
-    # 3. Instantiate tokenizer (tokenizer turns text into numbers ready for the model) 
     tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=model_id)
-
-    # 4. Instantiate the model
     llm_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=model_id, 
-                                                    torch_dtype=torch.float16, # datatype to use, we want float16
+                                                    torch_dtype=torch.float16,
                                                     quantization_config=quantization_config if use_quantization_config else None,
-                                                    low_cpu_mem_usage=False, # use full memory 
-                                                    attn_implementation=attn_implementation) # which attention version to use
+                                                    low_cpu_mem_usage=False,
+                                                    attn_implementation=attn_implementation) 
 
-    if not use_quantization_config: # quantization takes care of device setting automatically, so if it's not used, send model to GPU 
+    if not use_quantization_config:
         llm_model.to("cuda")
         
     return llm_model, tokenizer
@@ -388,14 +355,6 @@ def ask(query,
     Takes a query, finds relevant resources/context and generates an answer to the query based on the relevant resources.
     """
     
-    # Get just the scores and indices of top related results
-    """ query_embedding = embedding_model.encode(query)
-    
-    # Create a list of context items
-    results = collection.query(
-    query_embeddings=[query_embedding.tolist()],
-    n_results=5
-) """
     context_items, results = query_collection(query,collection, embedding_model)
     context_items = [result for result in results['documents'][0]]
 
@@ -403,30 +362,23 @@ def ask(query,
     """ for i, item in enumerate(context_items):
         item["score"] = scores[i].cpu() # return score back to CPU  """
         
-    # Format the prompt with context items
     prompt = prompt_formatter(query=query,
                               context_items=context_items,
                               tokenizer=tokenizer,
                               prompt=prompt)
     
-    # Tokenize the prompt
     input_ids = tokenizer(prompt, return_tensors="pt").to("cuda")
 
-    # Generate an output of tokens
-    # try Ollama:mistral
     outputs = llm_model.generate(**input_ids,
                                  temperature=temperature,
                                  do_sample=True,
                                  max_new_tokens=max_new_tokens)
     
-    # Turn the output tokens into text
     output_text = tokenizer.decode(outputs[0])
 
     if format_answer_text:
-        # Replace special tokens and unnecessary help message
         output_text = output_text.replace(prompt, "").replace("<bos>", "").replace("<eos>", "").replace("Sure, here is the answer to the user query:\n\n", "")
 
-    # Only return the answer without the context items
     if return_answer_only:
         return output_text
     
