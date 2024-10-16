@@ -24,8 +24,12 @@ from huggingface_hub import login
 from rank_bm25_local.rank_bm25 import BM25Okapi
 
 from prompts.prompts import BASE_PROMPT, MIN_PROMPT
+from config.APP_CONFIG import CUDA_ENABLED, HF_TOKEN
 
 nlp = English()
+embedding_model_name = "all-mpnet-base-v2"
+embedding_model = SentenceTransformer(model_name_or_path=embedding_model_name, 
+                                      device="cuda") # choose the device to load the model to (note: GPU will often be *much* faster than CPU)
 
 # Add a sentencizer pipeline, see https://spacy.io/api/sentencizer/ 
 nlp.add_pipe("sentencizer")
@@ -36,10 +40,13 @@ def iterator(obj, istqdm = False):
     else:
         return obj
     
-def load_embedding():
+def load_embedding(name = embedding_model_name,cuda_enabled = False):
     embedding_model_name = "all-mpnet-base-v2"
+    device = 'cpu'
+    if cuda_enabled:
+        device = 'cuda'
     embedding_model = SentenceTransformer(model_name_or_path=embedding_model_name, 
-                                        device="cuda")
+                                        device=device)
     return embedding_model 
 
 def text_formatter(text: str) -> str:
@@ -178,9 +185,7 @@ def filter_pages_and_texts(pages_and_chunks: dict,
 
 # Requires !pip install sentence-transformers
 
-embedding_model_name = "all-mpnet-base-v2"
-embedding_model = SentenceTransformer(model_name_or_path=embedding_model_name, 
-                                      device="cuda") # choose the device to load the model to (note: GPU will often be *much* faster than CPU)
+
 #embedding_model.to("cuda")
 def get_embedding(text):
     url = "http://localhost:49152/api/embeddings"
@@ -224,10 +229,10 @@ def connect_to_collection(host='localhost', port=49151, name='testing_python_cre
 
 def add_to_collection(embedded_pages_and_chunks,
                       collection,
+                      embedding_model_name = embedding_model_name,
                       path =None, 
                       url =None,
                       text = None):
-    embedding_model_name = "all-mpnet-base-v2"
     link = ''
     if path:
         # this is where plain text and pdf should be distinguished
@@ -283,9 +288,9 @@ def apply_pipeline(pages_and_texts):
     embedded_pages_and_chunks = apply_embeddings(pages_and_chunks,embedding_model,flatten=True)
     return embedded_pages_and_chunks
 
-def load_llm():
+def load_llm(token):
     # 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
-    token = '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'
+    
     login(token)
     
     gpu_memory_bytes = torch.cuda.get_device_properties(0).total_memory

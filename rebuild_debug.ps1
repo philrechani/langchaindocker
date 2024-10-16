@@ -1,4 +1,4 @@
-Set-Location C:\Users\crossfire234\Desktop\Software\LLMs\LangChainDocker
+Set-Location $env:homepathPS
 
 # Get the current date
 $currentDate = Get-Date -Format "MM/dd/yyyy"

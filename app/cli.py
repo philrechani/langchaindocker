@@ -10,13 +10,13 @@ from rag_functions import (
     load_embedding
 )
 from prompts.prompts import MIN_PROMPT
-from config.CHROMA_CONFIG import HOST, PORT, NAME
+from config.CONFIG import HOST, PORT, NAME, HF_TOKEN, CUDA_ENABLED
 
 command = ''
 print('loading llm...')
-llm_model, tokenizer = load_llm()
+llm_model, tokenizer = load_llm(HF_TOKEN)
 print('loading the embedding model...')
-embedding_model = load_embedding()
+embedding_model = load_embedding(cuda_enabled=CUDA_ENABLED)
 print('connecting to chromadb...')
 chroma_client, collection = connect_to_collection(host=HOST,port=PORT,name=NAME)
 print('ready!\n')
@@ -64,3 +64,13 @@ while command != '/exit':
         print('---\n')
         for item in context_items:
             print(item)
+            
+    if func == '/help':
+        print("""
+              /load\n
+              The load command will find the content and apply the embeddings and automatically store it to the ChromaDB
+              \tFlags: 
+              \t\t--file - for local pdf only at the moment
+              \t\t--url  - scrapes the text of a website provided
+              
+              """)
