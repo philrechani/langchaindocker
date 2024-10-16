@@ -10,7 +10,10 @@ from rag_functions import (
     load_embedding
 )
 from prompts.prompts import MIN_PROMPT
-from config.CONFIG import HOST, PORT, NAME, HF_TOKEN, CUDA_ENABLED
+try:
+    from config.CONFIG import HOST, PORT, NAME, HF_TOKEN, CUDA_ENABLED
+except:
+    from config.DEFAULT_CONFIG import HOST, PORT, NAME, HF_TOKEN, CUDA_ENABLED
 
 command = ''
 print('loading llm...')
