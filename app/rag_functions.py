@@ -23,9 +23,6 @@ from transformers.utils import is_flash_attn_2_available
 from huggingface_hub import login
 from rank_bm25_local.rank_bm25 import BM25Okapi
 
-from prompts.prompts import BASE_PROMPT, MIN_PROMPT
-from config.APP_CONFIG import CUDA_ENABLED, HF_TOKEN
-
 nlp = English()
 embedding_model_name = "all-mpnet-base-v2"
 embedding_model = SentenceTransformer(model_name_or_path=embedding_model_name, 
@@ -289,7 +286,6 @@ def apply_pipeline(pages_and_texts):
     return embedded_pages_and_chunks
 
 def load_llm(token):
-    # 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
     
     login(token)
     
