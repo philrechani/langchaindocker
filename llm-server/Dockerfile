@@ -1,4 +1,4 @@
-FROM ubuntu:latest
+FROM ubuntu:22.04
 
 RUN set -e; \
     apt-get update || (echo "apt-get update failed" && exit 1); \

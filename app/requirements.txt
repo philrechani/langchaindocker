@@ -12,3 +12,4 @@ huggingface_hub
 rank-bm25
 frontend
 bitsandbytes
+llama-cpp-python

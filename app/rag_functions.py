@@ -16,11 +16,10 @@ from transformers.utils import is_flash_attn_2_available
 
 from huggingface_hub import login
 from rank_bm25_local.rank_bm25 import BM25Okapi
+from llama_cpp import Llama
 
 nlp = English()
-embedding_model_name = "all-mpnet-base-v2"
-embedding_model = SentenceTransformer(model_name_or_path=embedding_model_name, 
-                                      device="cuda")
+
 nlp.add_pipe("sentencizer")
 
 def iterator(obj, istqdm = False):
@@ -29,7 +28,7 @@ def iterator(obj, istqdm = False):
     else:
         return obj
     
-def load_embedding(name = embedding_model_name,cuda_enabled = False):
+def load_embedding(cuda_enabled = False):
     embedding_model_name = "all-mpnet-base-v2"
     device = 'cpu'
     if cuda_enabled:
@@ -201,7 +200,7 @@ def connect_to_collection(host='localhost', port=49151, name='testing_python_cre
 
 def add_to_collection(embedded_pages_and_chunks,
                       collection,
-                      embedding_model_name = embedding_model_name,
+                      embedding_model_name: str,
                       path =None, 
                       url =None,
                       text = None):
@@ -252,7 +251,8 @@ def query_collection(query,
         
     return context_items, results
 
-def apply_pipeline(pages_and_texts):
+def apply_pipeline(pages_and_texts,embedding_model):
+    
     pages_and_texts = apply_spacy_nlp(pages_and_texts)
     pages_and_texts = chunk_sentences(pages_and_texts,num_sentence_chunk_size = 10 )
     pages_and_chunks = restructure_chunks(pages_and_texts)
@@ -260,50 +260,51 @@ def apply_pipeline(pages_and_texts):
     embedded_pages_and_chunks = apply_embeddings(pages_and_chunks,embedding_model,flatten=True)
     return embedded_pages_and_chunks
 
-def load_llm(token):
+def load_llm(token,check_gpu = False):
     
     login(token)
-    
-    gpu_memory_bytes = torch.cuda.get_device_properties(0).total_memory
-    gpu_memory_gb = round(gpu_memory_bytes / (2**30))
-    print(f"Available GPU memory: {gpu_memory_gb} GB")
-    # Note: the following is Gemma focused, however, there are more and more LLMs of the 2B and 7B size appearing for local use.
-    if gpu_memory_gb < 5.1:
-        print(f"Your available GPU memory is {gpu_memory_gb}GB, you may not have enough memory to run a Gemma LLM locally without quantization.")
-    elif gpu_memory_gb < 8.1:
-        print(f"GPU memory: {gpu_memory_gb} | Recommended model: Gemma 2B in 4-bit precision.")
-        use_quantization_config = True 
-        model_id = "google/gemma-2b-it"
-    elif gpu_memory_gb < 19.0:
-        print(f"GPU memory: {gpu_memory_gb} | Recommended model: Gemma 2B in float16 or Gemma 7B in 4-bit precision.")
-        use_quantization_config = False 
-        model_id = "google/gemma-2b-it"
-    elif gpu_memory_gb > 19.0:
-        print(f"GPU memory: {gpu_memory_gb} | Recommend model: Gemma 7B in 4-bit or float16 precision.")
-        use_quantization_config = False 
-        model_id = "google/gemma-7b-it"
+    model_id = 'gpt2'
+    if check_gpu:
+        gpu_memory_bytes = torch.cuda.get_device_properties(0).total_memory
+        gpu_memory_gb = round(gpu_memory_bytes / (2**30))
+        print(f"Available GPU memory: {gpu_memory_gb} GB")
+        # Note: the following is Gemma focused, however, there are more and more LLMs of the 2B and 7B size appearing for local use.
+        if gpu_memory_gb < 5.1:
+            print(f"Your available GPU memory is {gpu_memory_gb}GB, you may not have enough memory to run a Gemma LLM locally without quantization.")
+        elif gpu_memory_gb < 8.1:
+            print(f"GPU memory: {gpu_memory_gb} | Recommended model: Gemma 2B in 4-bit precision.")
+            use_quantization_config = True 
+            model_id = "google/gemma-2b-it"
+        elif gpu_memory_gb < 19.0:
+            print(f"GPU memory: {gpu_memory_gb} | Recommended model: Gemma 2B in float16 or Gemma 7B in 4-bit precision.")
+            use_quantization_config = False 
+            model_id = "google/gemma-2b-it"
+        elif gpu_memory_gb > 19.0:
+            print(f"GPU memory: {gpu_memory_gb} | Recommend model: Gemma 7B in 4-bit or float16 precision.")
+            use_quantization_config = False 
+            model_id = "google/gemma-7b-it"
 
-    print(f"use_quantization_config set to: {use_quantization_config}")
-    print(f"model_id set to: {model_id}")
+        print(f"use_quantization_config set to: {use_quantization_config}")
+        print(f"model_id set to: {model_id}")
 
 
     quantization_config = BitsAndBytesConfig(load_in_4bit=True,
                                             bnb_4bit_compute_dtype=torch.float16)
 
-    if (is_flash_attn_2_available()) and (torch.cuda.get_device_capability(0)[0] >= 8):
+    if (is_flash_attn_2_available()) and (torch.cuda.get_device_capability(0)[0] >= 8) and check_gpu:
         attn_implementation = "flash_attention_2"
     else:
         attn_implementation = "sdpa"
     print(f"[INFO] Using attention implementation: {attn_implementation}")
 
-    model_id = model_id 
+    
     print(f"[INFO] Using model_id: {model_id}")
 
     tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=model_id)
     llm_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=model_id, 
                                                     torch_dtype=torch.float16,
                                                     quantization_config=quantization_config if use_quantization_config else None,
-                                                    low_cpu_mem_usage=False,
+                                                    low_cpu_mem_usage=False if check_gpu else True,
                                                     attn_implementation=attn_implementation) 
 
     if not use_quantization_config:
@@ -311,6 +312,28 @@ def load_llm(token):
         
     return llm_model, tokenizer
 
+def load_gguf_llm():
+    pass
+
+def ask_gguf(query,
+             messages,
+             embedding_model,
+             collection,
+             llm_model,
+             prompt,
+             temperature=0.7,
+             max_tokens=2048):
+    context_items, results = query_collection(query,
+                                              collection,
+                                              embedding_model)
+    context_items = [result for result in results['documents'][0]]
+    context = "- " + "\n- ".join(context_items)
+    base_prompt = prompt.format(context=context, query=query)
+    message = [
+        {"role": "user",
+        "content": base_prompt}
+    ]
+    
 def prompt_formatter(query: str, 
                      context_items: list[dict],
                      tokenizer,
@@ -320,12 +343,7 @@ def prompt_formatter(query: str,
     """
     # Join context items into one dotted paragraph
     context = "- " + "\n- ".join(context_items)
-
-    # Create a base prompt with examples to help the model
-    # Note: this is very customizable, I've chosen to use 3 examples of the answer style we'd like.
-    # We could also write this in a txt file and import it in if we wanted.
     
-
     # Update base prompt with context items and query   
     base_prompt = prompt.format(context=context, query=query)
 
@@ -350,7 +368,8 @@ def ask(query,
         temperature=0.7,
         max_new_tokens=512,
         format_answer_text=True, 
-        return_answer_only=True):
+        return_answer_only=True,
+        check_gpu = False):
     """
     Takes a query, finds relevant resources/context and generates an answer to the query based on the relevant resources.
     """
@@ -367,7 +386,8 @@ def ask(query,
                               tokenizer=tokenizer,
                               prompt=prompt)
     
-    input_ids = tokenizer(prompt, return_tensors="pt").to("cuda")
+    ### uses cuda/cpu
+    input_ids = tokenizer(prompt, return_tensors="pt").to("cuda" if check_gpu else 'cpu')
 
     outputs = llm_model.generate(**input_ids,
                                  temperature=temperature,

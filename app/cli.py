@@ -11,8 +11,12 @@ from rag_functions import (
 )
 from prompts.prompts import MIN_PROMPT
 try:
+    
     from config.CONFIG import HOST, PORT, NAME, HF_TOKEN, CUDA_ENABLED
-except:
+    print('successfully loaded custom CONFIG')
+except Exception as e:
+    print(e)
+    print('loaded default configuration')
     from config.DEFAULT_CONFIG import HOST, PORT, NAME, HF_TOKEN, CUDA_ENABLED
 
 command = ''
@@ -36,14 +40,14 @@ while command != '/exit':
         if params[0] == '--file':
             path = params[1]
             pages_and_texts = open_and_read_pdf(path)
-            embedded_pages_and_chunks = apply_pipeline(pages_and_texts)
+            embedded_pages_and_chunks = apply_pipeline(pages_and_texts,embedding_model)
             add_to_collection(embedded_pages_and_chunks, collection, path = path)
             
         elif params[0] == '--url':
             url = params[1]
             text = load_webpage_requests(url)
             pages_and_texts = process_webpage_content(text)
-            embedded_pages_and_chunks = apply_pipeline(pages_and_texts)
+            embedded_pages_and_chunks = apply_pipeline(pages_and_texts,embedding_model)
             add_to_collection(embedded_pages_and_chunks, collection, url = url)
         else:
             print('PLEASE PROVIDE A FLAG (--file or --url)')

@@ -16,6 +16,8 @@ app/config/CONFIG.py
 app/config/LLM_SERVER_CONFIG.py
 app/config/APP_CONFIG.py
 app/config/CHROMA_CONFIG.py
+app/notebooks
+app/notebooks_public/test_logs.csv
 
 CONTAINER_CONFIG_WINDOWS.bat
 generate_config_windows.bat
