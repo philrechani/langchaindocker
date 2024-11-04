@@ -7,7 +7,6 @@ import re
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 import chromadb
-from chromadb.config import Settings
 from bs4 import BeautifulSoup
 
 import torch
@@ -114,13 +113,6 @@ def apply_spacy_nlp(pages_and_texts: dict, istqdm = False) -> dict:
         item["page_sentence_count_spacy"] = len(item["sentences"])
     return pages_and_texts
 
-def apply_spacy_nlp_filtered(pages_and_texts: dict, istqdm = False) -> dict:
-    for item in iterator(pages_and_texts, istqdm):
-        item["sentences"] = [str(sent) for sent in nlp(item["text"]).sents if len(str(sent)) <= 1024] #this is due to embedding contraints
-        # Count the sentences 
-        item["page_sentence_count_spacy"] = len(item["sentences"])
-    return pages_and_texts
-
 def split_list(input_list: list, 
                slice_size: int) -> list[list[str]]:
     """
@@ -182,7 +174,7 @@ def apply_ollama_embeddings(pages_and_chunks_over_min_token_len: dict,
         item["embedding"] = get_embedding(item['sentence_chunk'])
     
     return pages_and_chunks_over_min_token_len
-
+    
 def apply_embeddings(pages_and_chunks_over_min_token_len: dict, 
                      embedding_model: SentenceTransformer,
                      istqdm = False,
@@ -201,36 +193,9 @@ def apply_embeddings(pages_and_chunks_over_min_token_len: dict,
     
     return pages_and_chunks_over_min_token_len
 
-def apply_embeddings_api(API,
-                     pages_and_chunks_over_min_token_len: dict, 
-                     flatten = False) -> dict:
-    final_pages_and_chunks = []
-    if not flatten:
-        for item in pages_and_chunks_over_min_token_len:
-            text = re.sub('\s{2,}',' ',item["sentence_chunk"])
-            
-            embedding_result = API.embedding(text)
-            #this is simply a too large for current context error
-            if 'error' in embedding_result.keys():
-                print(len(text)/4)
-                print(text)
-                continue
-            item["embedding"] = embedding_result['embedding']
-            final_pages_and_chunks.append(item)
-
-    return final_pages_and_chunks
-
-def connect_to_collection(host='localhost', 
-                          port=49151, 
-                          name='testing_python_creation',
-                          local = False,
-                          persist_directory=''):
-    if local == False:
-        chroma_client = chromadb.HttpClient(host=host, port=port)
-        collection = chroma_client.get_or_create_collection(name=name)
-    else:
-        chroma_client = chromadb.PersistentClient(path=persist_directory)
-        collection = chroma_client.get_or_create_collection(name=name)
+def connect_to_collection(host='localhost', port=49151, name='testing_python_creation'):
+    chroma_client = chromadb.HttpClient(host=host, port=port)
+    collection = chroma_client.get_or_create_collection(name=name)
     return chroma_client, collection
 
 def add_to_collection(embedded_pages_and_chunks,
@@ -247,7 +212,6 @@ def add_to_collection(embedded_pages_and_chunks,
     if url:
         file_name = url
         link = url
-        
     if text:
         link = 'plain text'
         
@@ -262,9 +226,8 @@ def add_to_collection(embedded_pages_and_chunks,
             'link': link
         } for item in embedded_pages_and_chunks],
         ids=[f"{file_name}_chunk_{i}" for i in range(len(embedded_pages_and_chunks))],
-        embeddings=[item['embedding'] for item in embedded_pages_and_chunks]
+        embeddings=[item['embedding'].tolist() for item in embedded_pages_and_chunks]
     )
-    print('added successfully...')
     
 def query_collection(query, 
                      collection, 
@@ -288,23 +251,6 @@ def query_collection(query,
         
     return context_items, results
 
-# query database
-def query_collection_api(API,
-                     query, 
-                     collection):
-    query_embedding = API.embedding(query)['embedding']
-    
-    # Create a list of context items
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=2
-    )
-    # get the score?
-    context_items = [result for result in results['documents'][0]]
-    
-        
-    return context_items, results
-
 def apply_pipeline(pages_and_texts,embedding_model):
     
     pages_and_texts = apply_spacy_nlp(pages_and_texts)
@@ -313,15 +259,6 @@ def apply_pipeline(pages_and_texts,embedding_model):
     pages_and_chunks = filter_pages_and_texts(pages_and_chunks,30)
     embedded_pages_and_chunks = apply_embeddings(pages_and_chunks,embedding_model,flatten=True)
     return embedded_pages_and_chunks
-
-def get_pages_and_chunks(pages_and_texts):
-    
-    pages_and_texts = apply_spacy_nlp(pages_and_texts)
-    pages_and_texts = chunk_sentences(pages_and_texts,num_sentence_chunk_size = 10 )
-    pages_and_chunks = restructure_chunks(pages_and_texts)
-    pages_and_chunks = filter_pages_and_texts(pages_and_chunks,30)
-    
-    return pages_and_chunks
 
 def load_llm(token,check_gpu = False):
     
@@ -421,17 +358,6 @@ def prompt_formatter(query: str,
                                           tokenize=False,
                                           add_generation_prompt=True)
     return prompt
-
-def ask_api(query,
-            API,
-            collection):
-    
-    context_items, results = query_collection_api(API,query,collection)
-    
-    context = "- " + "\n- ".join(context_items)
-    context_prompt =f'With this context: {context}, answer the following prompt: {query}'
-    response = API.completion(context_prompt)
-    return response, results
 
 def ask(query,
         embedding_model,
