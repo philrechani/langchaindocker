@@ -73,15 +73,19 @@ class RAG(Llama):
     
     def chat(self, prompt,**kwargs):
         self.reinitialize_model('chat')
+        return super().__call__(prompt,max_tokens=None,**kwargs)
+    
+    def __call__(self, prompt,**kwargs):
+        self.reinitialize_model('chat')
         return super().__call__(prompt,**kwargs)
     
-    def ask(self,prompt, max_tokens= None, **kwargs):
+    def ask(self,prompt, max_tokens= None, n_results=2, **kwargs):
         if self.current_collection is not None:
             self.reinitialize_model('embed')
-            embeddings = super().create_embedding(prompt)['data']['embedding']
+            embeddings = super().create_embedding(prompt)['data'][0]['embedding'][0]
             try:
-                results = self.current_collection.query(query_embeddings=embeddings,n_results = 2)['documents'][0]
-                context = results[0]
+                results = self.current_collection.query(query_embeddings=embeddings,n_results = n_results)['documents'][0]
+                context = ' '.join(results)
             except:
                 print('No context found. Using no context')
                 context = ''
@@ -89,7 +93,7 @@ class RAG(Llama):
             self.reinitialize_model('chat')
             prompt = f'Answer this query: {prompt}\n With the following context: {context}'
             
-            return super().__call__(prompt,max_tokens=max_tokens**kwargs)
+            return super().__call__(prompt,max_tokens=max_tokens, **kwargs)
         else:
             print('First initialize the collection to ask with context')
         
@@ -98,32 +102,14 @@ class RAG(Llama):
     
     # Knowledge Base Functions
     
-    def chunked(self, iterable, chunk_size):
-        for i in range(0, len(iterable), chunk_size):
-            yield iterable[i:i + chunk_size]
-
-    def split_text(self,text):
-        # First, split by newlines
-        lines = text.split('\n')
-        
-        # Then, split each line by '. '
-        result = []
-        for line in lines:
-            result.extend(re.split(r'(?<=\.)\s', line))
-        
-        # Remove any empty strings
-        result = [item.strip() for item in result if item.strip()]
-        
-        return result
-    
     def load_page(self, text: str, page_number: int) -> dict:
-        return {"page_number": page_number,  
-                "char_count": len(text),
-                "word_count": len(text.split(" ")),
-                "sentence_count_raw": len(text.split(". ")),
-                "page_token_count": len(text) / 4,
-                "raw_text": text,
-                'date_added': datetime.now().strftime("%Y/%m/%d-%H:%M:%S")}
+        return {"char_count": len(text),
+                'date_added': datetime.now().strftime("%Y/%m/%d-%H:%M:%S"),
+                "page_number": page_number,  
+                "sentence_count": len(text.split(". ")),
+                "token_count": len(text) / 4,
+                "text": text,
+                "word_count": len(text.split(" "))}
     
     def load_webpage_text(self, url: str) -> str:
         response = requests.get(url)
@@ -139,14 +125,33 @@ class RAG(Llama):
             pages.append(self.load_page(text,page_number))
         return pages
     
+    def split_text(self,text):
+        # First, split by newlines
+        lines = text.split('\n')
+        
+        # Then, split each line by '. '
+        result = []
+        for line in lines:
+            result.extend(re.split(r'(?<=\.)\s', line))
+        
+        # Remove any empty strings
+        result = [item.strip() for item in result if item.strip()]
+        
+        return result    
+    
+    def chunked(self, iterable, chunk_size):
+        for i in range(0, len(iterable), chunk_size):
+            yield iterable[i:i + chunk_size]
+    
     def process_pages(self, pages: list[dict], sentence_number = 5) -> list[dict]:
         self.reinitialize_model('tokenize')
-        page['sentences'] = []
+        
         token_limit = self.kwargs['n_ctx']/2
         
         for page in pages:
+            page['sentences'] = []
             total_tokens = 0
-            raw_text = page['raw_text']  
+            raw_text = page['text']  
             pieces = self.split_text(raw_text)
             
             for chunk in self.chunked(pieces, sentence_number):
@@ -161,11 +166,13 @@ class RAG(Llama):
                         chunk_text = ' '.join(new_chunks)
                 total_tokens += n_tokens
                 page['sentences'].append({
-                            'text': chunk_text,
                             'char_count': len(chunk_text),
-                            'word_count': len(chunk_text.split(' ')),
+                            'date_added': page['date_added'],
+                            'page_number': page['page_number'],
+                            'text': chunk_text,
+                            'token_count': n_tokens,
                             'sentence_count': len(chunk_text.split('. ')),
-                            'token_count': n_tokens
+                            'word_count': len(chunk_text.split(' '))    
                         })
             page['page_token_count'] = total_tokens
         return pages
@@ -174,12 +181,12 @@ class RAG(Llama):
         self.reinitialize_model('embed')
         for page in pages:
             for sentence in page['sentences']:
-                page['embedding'] = super().embed(sentence['text'].encode('utf-8'))
+                sentence['embedding'] = super().embed(sentence['text'])[0]
         return pages
     
     # ChromaDB Functions
     
-    def initialize_collection(self, type = 'persist', collection_name = None):
+    def initialize_collection(self, type = 'memory', collection_name = None):
         if collection_name is None:
             collection_name = self.current_collection_name
             
@@ -195,9 +202,8 @@ class RAG(Llama):
         self.current_collection = self.current_client.get_or_create_collection(name = collection_name)
     
     def add_to_collection(self, pages: list[dict],
-                      collection,
-                      path =None, 
-                      url =None,
+                      path = None, 
+                      url = None,
                       text = None):
         link = ''
         if path:
@@ -209,21 +215,25 @@ class RAG(Llama):
             link = url
             
         if text:
+            file_name = ''
             link = 'plain text'
-        metadata_keys = pages[0].keys()
-        collection.add(
-            documents=[item['sentence_chunk'] for item in pages],
-            metadatas=[{
-                'page_number': item['page_number'],
-                'char_count': item['chunk_char_count'],
-                'word_count': item['chunk_word_count'],
-                'token_count': item['chunk_token_count'],
-                'embedding_model': self.current_,
-                'link': link
-            } for item in pages],
-            ids=[f"{file_name}_chunk_{i}" for i in range(len(pages))],
-            embeddings=[item['embedding'] for item in pages]
-        )
+        for j, page in enumerate(pages):
+            self.current_collection.add(
+                documents=[sentence['text'] for sentence in page['sentences']],
+                metadatas=[{
+                    'char_count': sentence['char_count'],
+                    'page_number': sentence['page_number'],
+                    'date_added': sentence['date_added'],
+                    'sentence_count': sentence['sentence_count'],
+                    'token_count': sentence['token_count'],
+                    'word_count': sentence['word_count'],
+                    
+                    'embedding_model': self.kwargs['model_path'],
+                    'link': link
+                } for sentence in page['sentences']],
+                ids=[f"{file_name}_chunk_{i}_{j}" for i in range(len(page['sentences']))],
+                embeddings=[sentence['embedding'] for sentence in page['sentences']]
+            )
         print('added successfully...')
     
     def query_collection(self, collection, query_embeddings = None, query_text = None, query_images = None, query_uris = None, n_results = None, where = None, where_document = None, include = None):
