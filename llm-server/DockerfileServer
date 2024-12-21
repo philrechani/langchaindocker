@@ -1,0 +1,9 @@
+FROM ubuntu:22.04
+
+RUN set -e; \
+    apt-get update || (echo "apt-get update failed" && exit 1); \
+    apt-get install -y curl iputils-ping || (echo "apt-get install failed" && exit 1)
+
+RUN curl -fsSL https://ollama.ai/install.sh | sh
+
+RUN /bin/bash -c "ollama serve & sleep 5 && ollama pull llama2"

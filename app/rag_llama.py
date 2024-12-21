@@ -33,7 +33,7 @@ class RAG(Llama):
         self.kwargs = kwargs
         
         self.current_mode = 'chat'
-        
+        self.context_size = self.kwargs['n_ctx']
         self.chroma_host = ''
         self.chroma_persist_directory = PERSIST_DIRECTORY
         self.current_collection_name = 'default_peanut_mushroom'
@@ -55,6 +55,7 @@ class RAG(Llama):
         if mode == self.current_mode:
             return  # No need to reinitialize if already in the correct mode
 
+        #this stuff needs to be flexible. i.e. it needs to go back to the set context size and only 1 for embedding
         if mode == 'embed':
             self.kwargs['embedding'] = True
             self.kwargs['vocab_only'] = False
@@ -62,11 +63,11 @@ class RAG(Llama):
         elif mode == 'chat':
             self.kwargs['embedding'] = False
             self.kwargs['vocab_only'] = False
-            self.kwargs['n_ctx'] = 2048  # Set appropriate context window for chat
+            self.kwargs['n_ctx'] = self.context_size# Set appropriate context window for chat
         elif mode == 'tokenize':
             self.kwargs['embedding'] = False
             self.kwargs['vocab_only'] = True
-            self.kwargs['n_ctx'] = 2048
+            self.kwargs['n_ctx'] = self.context_size
             
         super().__init__(*self.args, **self.kwargs)
         self.current_mode = mode                                   
@@ -79,21 +80,25 @@ class RAG(Llama):
         self.reinitialize_model('chat')
         return super().__call__(prompt,**kwargs)
     
-    def ask(self,prompt, max_tokens= None, n_results=2, **kwargs):
+    def ask(self,prompt, max_tokens= None, n_results=5, **kwargs):
         if self.current_collection is not None:
             self.reinitialize_model('embed')
-            embeddings = super().create_embedding(prompt)['data'][0]['embedding'][0]
+            embeddings = super().create_embedding(prompt)['data'][0]['embedding']
+            [0][0]
+            
             try:
-                results = self.current_collection.query(query_embeddings=embeddings,n_results = n_results)['documents'][0]
-                context = ' '.join(results)
-            except:
+                results = self.current_collection.query(query_embeddings=embeddings,n_results = n_results)['documents']
+                context = ' '.join(results[0])
+                
+            except Exception as e:
+                print(e)
                 print('No context found. Using no context')
                 context = ''
             
             self.reinitialize_model('chat')
             prompt = f'Answer this query: {prompt}\n With the following context: {context}'
             
-            return super().__call__(prompt,max_tokens=max_tokens, **kwargs)
+            return super().__call__(prompt,max_tokens=max_tokens, **kwargs), context
         else:
             print('First initialize the collection to ask with context')
         
@@ -121,8 +126,9 @@ class RAG(Llama):
         doc = fitz.open(pdf_path)  
         pages = []
         for page_number, page in enumerate(doc):  
-            text = page.get_text()  
-            pages.append(self.load_page(text,page_number))
+            text = page.get_text()
+            if len(text) != 0:
+                pages.append(self.load_page(text,page_number))
         return pages
     
     def split_text(self,text):
@@ -143,11 +149,12 @@ class RAG(Llama):
         for i in range(0, len(iterable), chunk_size):
             yield iterable[i:i + chunk_size]
     
+    #might consider doing it by paragraphs
     def process_pages(self, pages: list[dict], sentence_number = 5) -> list[dict]:
         self.reinitialize_model('tokenize')
         
         token_limit = self.kwargs['n_ctx']/2
-        
+        print('token_limit:',token_limit)
         for page in pages:
             page['sentences'] = []
             total_tokens = 0

@@ -20,3 +20,5 @@ PORT='49151'
 NAME='whatever_you_wish'
 ```
 Then go to  ```app/``` and run```python cli.py```
+
+```docker compose -f compose.server.yaml``` up for only the database and llm server

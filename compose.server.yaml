@@ -1,0 +1,31 @@
+version: '3'
+services:
+  llm-server:
+    build:
+      context: ./llm-server
+      dockerfile: DockerfileServer
+    tty: true #idk but it keeps it running without hanging
+    stdin_open: true #allows you to type when attaching to the container
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434 #ensure it listens on all interfaces
+    command: ollama serve
+    ports:
+      - "49153:11434"
+    networks:
+      - llm-connection
+
+  chroma-db:
+    image: chromadb/chroma:latest
+    volumes:
+      - ./chroma_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=False
+      - CHROMA_ENDPOINT='http://host.docker.internal:8000'
+    ports:
+      - "49151:8000"
+    networks:
+      - llm-connection
+
+networks:
+  llm-connection:
+    driver: bridge
